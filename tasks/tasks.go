@@ -1,202 +1,102 @@
 package tasks
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
-	"io/ioutil"
-	"net/http"
-	ht "github.com/rafalkrupinski/revapigw/http"
-	"github.com/NodePrime/jsonpath"
 	"github.com/dghubble/sling"
-	"strconv"
-	"strings"
-	"time"
-	"github.com/rafalkrupinski/http-poll/uints64"
+	ht "github.com/rafalkrupinski/revapigw/http"
+	"net/http"
 	"net/url"
+	"time"
 )
 
-type TaskSpecification struct {
-	//URL of the data to poll
-	SourceAddress    string
+type Task interface {
+	Process(*http.Response) (next *url.URL, error error)
+}
 
-	//param name to limit results (e.g. since)
-	IdLimitArg       string
+type SourceSpecification struct {
+	//URL of the data to poll
+	SourceAddress *url.URL
+}
+
+type TaskSpecification struct {
+	*SourceSpecification
 
 	//Poll frequency
-	Frequency        time.Duration
+	Frequency     time.Duration
 
-	//JSONPath of the results' ID used to limit
-	IdPath           string
+	TargetAddress string
 
-	// URL of the resource, which will match IdPath and return Id of the last known object
-	LastResultSource string
+	InClient      *http.Client
+	OutClient     *http.Client
 
-	// The order in which the service returns its results -> use either min or max Id in the next hit
-	SortOrder        ISortOrder
-
-	TargetAddress    string
-}
-
-type RuntimeSpec struct {
-	*TaskSpecification
-
-	idSelect maxFunc
-
-	parseId  parseIdFunc
-
-	nextUrl  nextUrl
-}
-
-func NewRuntimeSpec(ts*TaskSpecification) *RuntimeSpec {
-	result := &RuntimeSpec{
-		TaskSpecification:ts,
-		idSelect : ts.SortOrder.Max,
-		parseId : func(data[]byte) (uint64, error) {
-			return strconv.ParseUint(string(data), 10, 64)
-		},
-	}
-
-	return result
+	Task
 }
 
 type TaskState struct {
-	*RuntimeSpec
-	lastId    uint64
-	idPath    []*jsonpath.Path
-	inClient  *http.Client
-	outClient *http.Client
+	*TaskSpecification
+	next *url.URL
 }
 
-func NewTaskState(spec*TaskSpecification, inClient  *http.Client, outClient *http.Client) (*TaskState, error) {
+func NewTaskState(spec *TaskSpecification) (*TaskState) {
 	ts := &TaskState{
-		RuntimeSpec:NewRuntimeSpec(spec),
-		lastId:spec.SortOrder.InitialId(),
+		spec,
+		nil,
 	}
-
-	if ts.IdLimitArg != "" && ts.IdPath != "" {
-		ts.nextUrl = ts.nextUrlWithId
-		//ts.nextUrl = ts.nextUrlPlain
-
-		paths, err := jsonpath.ParsePaths(ts.IdPath)
-		if err != nil {
-			return nil, err
-		}
-		ts.idPath = paths
-	} else {
-		ts.nextUrl = ts.nextUrlPlain
-	}
-
-	ts.inClient = inClient
-	ts.outClient = outClient
-	return ts, nil
+	return ts
 }
 
-func (ts*TaskState)Run() {
+func (ts *TaskState) Run() error {
 	nextUrl := ts.nextUrl()
 	fmt.Println(nextUrl)
-	req, err := sling.New().Get(nextUrl).Request()
+
+	//TODO handle URL with #fragment
+	req, err := sling.New().Client(ts.InClient).Get(nextUrl.String()).Request()
 	if err != nil {
 		panic(err)
 	}
 
-	resp, err := ts.inClient.Do(req)
+	resp, err := ts.InClient.Do(req)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	buf, err := ioutil.ReadAll(resp.Body)
+	if ts.Task != nil {
+		next, err := ts.Task.Process(resp)
+		if err != nil {
+			return err
+		}
 
-	data, err := jsonpath.EvalPathsInBytes(buf, ts.idPath)
-
-	lastId := ts.lastId
-
-	for {
-		if result, ok := data.Next(); ok {
-			id, err := ts.parseId(result.Value)
-			if err != nil {
-				fmt.Println(err)
-			} else {
-				newId := ts.idSelect(lastId, id)
-				fmt.Printf("%d %d => %d\n", lastId, id, newId)
-				lastId = newId
-			}
-		} else {
-			break
+		if next != nil {
+			ts.next = next
 		}
 	}
 
-	fmt.Println(lastId)
-	ts.lastId = lastId
+	return ts.post(resp)
+}
 
-	if data.Error != nil {
-		fmt.Println(data.Error)
-		return
+func (ts *TaskState) post(resp *http.Response) error {
+	passReq, err := http.NewRequest(http.MethodPost, ts.TargetAddress, resp.Body)
+	if err != nil {
+		return err
 	}
-	passReq, _ := http.NewRequest(http.MethodPost, ts.TargetAddress, bytes.NewReader(buf))
 
 	if v := resp.Header.Get(ht.CONTENT_LEN); v != "" {
 		passReq.Header.Add(ht.CONTENT_LEN, v)
 	}
 
-	ts.outClient.Do(passReq)
-
+	_, err = ts.OutClient.Do(passReq)
+	return err
+	//TODO handle http errors
 }
 
-type nextUrl func() string
-
-func (ts*TaskState) nextUrlWithId() string {
-	addr, _ := url.Parse(ts.SourceAddress)
-	query := addr.Query()
-	query.Set(ts.IdLimitArg, strconv.FormatUint(ts.lastId, 10))
-	addr.RawQuery = query.Encode()
-	return addr.String()
-}
-
-func (ts*TaskState) nextUrlPlain() string {
-	return ts.SourceAddress
-}
-
-type maxFunc func(uint64, uint64) uint64
-
-type ISortOrder interface {
-	Max(uint64, uint64) uint64
-	InitialId() uint64
-}
-
-type SortOrder int
-
-const (
-	Desc SortOrder = -1
-	Asc SortOrder = 1
-)
-
-func ParseSortOrder(v string) (SortOrder, error) {
-	switch strings.ToUpper(v) {
-	case "ASC":
-		return Asc, nil
-	case "DESC":
-		return Desc, nil
-	default:
-		return 0, errors.New("Unupported SortOrder")
-	}
-}
-
-func (o SortOrder) Max(a, b uint64) uint64 {
-	if o == Asc {
-		return uints64.Max(a, b)
+func (ts *TaskState) nextUrl() *url.URL {
+	if ts.next == nil {
+		return ts.SourceSpecification.SourceAddress
 	} else {
-		return uints64.Min(a, b)
+		return ts.next
 	}
 }
 
-func (o SortOrder)InitialId() uint64 {
-	if o == Asc {
-		return uints64.MIN
-	} else {
-		return uints64.MAX
-	}
+func (t *TaskState) String() string {
+	return fmt.Sprintf("%v %v", t.next, t.Task)
 }
-
-type parseIdFunc func([]byte) (uint64, error)
-
