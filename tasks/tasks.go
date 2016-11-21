@@ -48,7 +48,11 @@ func NewTaskState(spec *TaskSpecification) *TaskState {
 		spec,
 		nil,
 	}
-	ts.Task.SetStore(persist.GetPrefixed(spec.Name))
+
+	if ts.Task != nil {
+		ts.Task.SetStore(persist.GetPrefixed(spec.Name))
+	}
+
 	return ts
 }
 
