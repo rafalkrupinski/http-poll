@@ -1,60 +1,12 @@
-package main
+package http_poll
 
 import (
-	"flag"
 	"fmt"
-	"github.com/rafalkrupinski/http-poll/etsy"
-	"github.com/rafalkrupinski/http-poll/persist"
 	"github.com/rafalkrupinski/http-poll/tasks"
-	ht "github.com/rafalkrupinski/revapigw/http"
-	"net/http"
-	"net/url"
-	"strconv"
 	"time"
 )
 
-func onErr(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-func main() {
-	var shopId int
-	flag.IntVar(&shopId, "s", 0, "ShopId")
-	dbpath := flag.String("db", "", "Database path")
-	flag.Parse()
-
-	if shopId == 0 || *dbpath == "" {
-		flag.Usage()
-		return
-	}
-
-	persist.Init(*dbpath)
-
-	srcUrl, err := url.Parse("http://openapi.etsy.com/v2/shops/" + strconv.Itoa(shopId) + "/receipts")
-	onErr(err)
-
-	proxyUrl, err := srcUrl.Parse("http://localhost:8080")
-	onErr(err)
-
-	spec := &tasks.TaskSpecification{
-		SourceSpecification: &tasks.SourceSpecification{
-			SourceAddress: srcUrl,
-		},
-		Frequency:     time.Second * 5,
-		TargetAddress: "http://localhost:9090/receipt",
-		InClient:      ht.NewClientBuilder().WithTransport(&http.Transport{Proxy: http.ProxyURL(proxyUrl)}).Build(),
-		OutClient:     ht.NewClientBuilder().Build(),
-		Task:          etsy.New(),
-	}
-
-	task := tasks.NewTaskState(spec)
-
-	start(task)
-}
-
-func start(task *tasks.TaskState) {
+func Start(task *tasks.TaskState) {
 	ticker := time.NewTicker(task.Frequency)
 	go doRun(task)
 	for range ticker.C {
