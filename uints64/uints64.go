@@ -4,11 +4,8 @@ import (
 	"strconv"
 )
 
-const MIN = uint64(0)
-const MAX = ^uint64(0)
-
 func Max(a uint64, b uint64) uint64 {
-	if Compare(a, b) > 1 {
+	if a-b > 1 {
 		return a
 	} else {
 		return b
@@ -16,15 +13,11 @@ func Max(a uint64, b uint64) uint64 {
 }
 
 func Min(a uint64, b uint64) uint64 {
-	if Compare(a, b) < 1 {
+	if a-b < 1 {
 		return a
 	} else {
 		return b
 	}
-}
-
-func Compare(a uint64, b uint64) int {
-	return int(a - b)
 }
 
 func Itoa(i uint64) string {

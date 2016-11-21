@@ -3,6 +3,8 @@ package tasks
 import (
 	"fmt"
 	"github.com/dghubble/sling"
+	"github.com/docker/libkv/store"
+	"github.com/rafalkrupinski/http-poll/persist"
 	ht "github.com/rafalkrupinski/revapigw/http"
 	"net/http"
 	"net/url"
@@ -10,7 +12,9 @@ import (
 )
 
 type Task interface {
+	SetStore(store.Store)
 	Process(*http.Response) (next *url.URL, error error)
+	OnSuccess()
 }
 
 type SourceSpecification struct {
@@ -19,15 +23,17 @@ type SourceSpecification struct {
 }
 
 type TaskSpecification struct {
+	Name string
+
 	*SourceSpecification
 
 	//Poll frequency
-	Frequency     time.Duration
+	Frequency time.Duration
 
 	TargetAddress string
 
-	InClient      *http.Client
-	OutClient     *http.Client
+	InClient  *http.Client
+	OutClient *http.Client
 
 	Task
 }
@@ -37,11 +43,12 @@ type TaskState struct {
 	next *url.URL
 }
 
-func NewTaskState(spec *TaskSpecification) (*TaskState) {
+func NewTaskState(spec *TaskSpecification) *TaskState {
 	ts := &TaskState{
 		spec,
 		nil,
 	}
+	ts.Task.SetStore(persist.GetPrefixed(spec.Name))
 	return ts
 }
 
@@ -71,7 +78,13 @@ func (ts *TaskState) Run() error {
 		}
 	}
 
-	return ts.post(resp)
+	err = ts.post(resp)
+
+	if err == nil {
+		ts.Task.OnSuccess()
+	}
+
+	return err
 }
 
 func (ts *TaskState) post(resp *http.Response) error {
