@@ -1,13 +1,14 @@
 package etsy
 
 import (
-	"net/url"
-	"net/http"
-	"io/ioutil"
+	"errors"
 	"fmt"
+	"github.com/docker/libkv/store"
 	"github.com/eleme/jsonpath"
 	"github.com/rafalkrupinski/http-poll/uints64"
-	"errors"
+	"io/ioutil"
+	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -19,7 +20,7 @@ type etsyTask struct {
 	maxId uint64
 }
 
-func (task *etsyTask) Process(resp*http.Response) (*url.URL, error) {
+func (task *etsyTask) Process(resp *http.Response) (*url.URL, error) {
 	buf, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -47,17 +48,17 @@ func (task *etsyTask) Process(resp*http.Response) (*url.URL, error) {
 	if nextPage == 0 {
 		q := nextUrl.Query()
 		q.Del("page")
-		nextUrl.RawQuery = q.Encode();
+		nextUrl.RawQuery = q.Encode()
 	} else {
 		q := nextUrl.Query()
 		q.Set("page", uints64.Itoa(nextPage))
-		nextUrl.RawQuery = q.Encode();
+		nextUrl.RawQuery = q.Encode()
 	}
 
 	return &nextUrl, nil
 }
 
-func parseResponse(buf []byte) (ids []uint64, nextPage, maxId  uint64, err error) {
+func parseResponse(buf []byte) (ids []uint64, nextPage, maxId uint64, err error) {
 	//TODO take receipt_id as ctor param
 	idPath, err := jsonpath.ParsePath("$.results[*].receipt_id")
 	if err != nil {
@@ -75,7 +76,7 @@ func parseResponse(buf []byte) (ids []uint64, nextPage, maxId  uint64, err error
 	}
 
 	for {
-		result, hasNext := data.Next();
+		result, hasNext := data.Next()
 		if !hasNext {
 			break
 		}
@@ -84,15 +85,15 @@ func parseResponse(buf []byte) (ids []uint64, nextPage, maxId  uint64, err error
 			continue
 		}
 
-		number, err := strconv.ParseUint(string(data), 10, 64)
+		number, err := strconv.ParseUint(string(result.Value), 10, 64)
 		if err != nil {
 			return []uint64{}, 0, 0, err
 		}
 
 		keys := result.Keys
-		key := string(keys[len(keys) - 1].([]byte))
+		key := string(keys[len(keys)-1].([]byte))
 		// TODO figure out way to read this const from the pattern
-		if (key == "receipt_id") {
+		if key == "receipt_id" {
 			id := number
 			newMaxId := uints64.Max(maxId, number)
 			fmt.Printf("%d %d => %d\n", maxId, id, newMaxId)
@@ -111,6 +112,12 @@ func New() *etsyTask {
 	return new(etsyTask)
 }
 
-func (t*etsyTask)String() string {
+func (t *etsyTask) String() string {
 	return fmt.Sprintf("%v %v", t.limitId, t.maxId)
+}
+
+func (t *etsyTask) OnSuccess() {
+}
+
+func (t *etsyTask) SetStore(db store.Store) {
 }

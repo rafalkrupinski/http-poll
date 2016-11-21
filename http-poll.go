@@ -1,15 +1,16 @@
 package main
 
 import (
-	"github.com/rafalkrupinski/http-poll/etsy"
 	"flag"
 	"fmt"
+	"github.com/rafalkrupinski/http-poll/etsy"
+	"github.com/rafalkrupinski/http-poll/persist"
+	"github.com/rafalkrupinski/http-poll/tasks"
 	ht "github.com/rafalkrupinski/revapigw/http"
 	"net/http"
-	"strconv"
-	"github.com/rafalkrupinski/http-poll/tasks"
-	"time"
 	"net/url"
+	"strconv"
+	"time"
 )
 
 func onErr(err error) {
@@ -21,7 +22,15 @@ func onErr(err error) {
 func main() {
 	var shopId int
 	flag.IntVar(&shopId, "s", 0, "ShopId")
+	dbpath := flag.String("db", "", "Database path")
 	flag.Parse()
+
+	if shopId == 0 || *dbpath == "" {
+		flag.Usage()
+		return
+	}
+
+	persist.Init(*dbpath)
 
 	srcUrl, err := url.Parse("http://openapi.etsy.com/v2/shops/" + strconv.Itoa(shopId) + "/receipts")
 	onErr(err)
@@ -35,9 +44,9 @@ func main() {
 		},
 		Frequency:     time.Second * 5,
 		TargetAddress: "http://localhost:9090/receipt",
-		InClient : ht.NewClientBuilder().WithTransport(&http.Transport{Proxy: http.ProxyURL(proxyUrl)}).Build(),
-		OutClient : ht.NewClientBuilder().Build(),
-		Task: etsy.New(),
+		InClient:      ht.NewClientBuilder().WithTransport(&http.Transport{Proxy: http.ProxyURL(proxyUrl)}).Build(),
+		OutClient:     ht.NewClientBuilder().Build(),
+		Task:          etsy.New(),
 	}
 
 	task := tasks.NewTaskState(spec)
@@ -53,7 +62,7 @@ func start(task *tasks.TaskState) {
 	}
 }
 
-func doRun(task *tasks.TaskState){
+func doRun(task *tasks.TaskState) {
 	err := task.Run()
 	if err != nil {
 		fmt.Println(err)
