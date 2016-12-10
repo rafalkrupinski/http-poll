@@ -5,7 +5,7 @@ import (
 	"github.com/dghubble/sling"
 	"github.com/docker/libkv/store"
 	"github.com/rafalkrupinski/http-poll/persist"
-	ht "github.com/rafalkrupinski/revapigw/http"
+	ht "github.com/rafalkrupinski/rev-api-gw/http"
 	"net/http"
 	"net/url"
 	"time"
