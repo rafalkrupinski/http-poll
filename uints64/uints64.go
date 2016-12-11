@@ -5,7 +5,7 @@ import (
 )
 
 func Max(a uint64, b uint64) uint64 {
-	if a-b > 1 {
+	if a > b {
 		return a
 	} else {
 		return b
@@ -13,7 +13,7 @@ func Max(a uint64, b uint64) uint64 {
 }
 
 func Min(a uint64, b uint64) uint64 {
-	if a-b < 1 {
+	if a < b {
 		return a
 	} else {
 		return b
