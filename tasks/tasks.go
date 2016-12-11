@@ -1,98 +1,149 @@
 package tasks
 
 import (
+	"errors"
 	"fmt"
 	"github.com/dghubble/sling"
 	"github.com/docker/libkv/store"
 	"github.com/rafalkrupinski/http-poll/persist"
 	ht "github.com/rafalkrupinski/rev-api-gw/http"
+	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
 )
 
-type Task interface {
-	SetStore(store.Store)
-	Process(*http.Response) (next *url.URL, error error)
-	OnSuccess()
+type Processor interface {
+	// Return a URL to the next batch of data based on passed default (or base) URL and Processor's state.
+	Next(*url.URL) (*url.URL, error)
+
+	// Get state of this processor so the tasks module can manage it's persistence
+	State() ProcessorState
+
+	// Update the state of this processor based on the response
+	Process(*http.Response) error
 }
 
-type SourceSpecification struct {
+type ProcessorState interface {
+	Persist(store.Store) error
+	Read(store.Store) error
+}
+
+type RemoteSpecification struct {
 	//URL of the data to poll
-	SourceAddress *url.URL
+	Address *url.URL
+
+	//Method  string
+
+	*http.Client
 }
 
 type TaskSpecification struct {
 	Name string
 
-	*SourceSpecification
-
 	//Poll frequency
 	Frequency time.Duration
 
-	TargetAddress string
+	Source *RemoteSpecification
 
-	InClient  *http.Client
-	OutClient *http.Client
+	ProcessorFactory
 
-	Task
+	Destination *RemoteSpecification
 }
 
-type TaskState struct {
-	*TaskSpecification
-	next *url.URL
+type ProcessorFactory func() Processor
+
+type TaskInst struct {
+	Spec *TaskSpecification
+	p    Processor
+	s    store.Store
 }
 
-func NewTaskState(spec *TaskSpecification) *TaskState {
-	ts := &TaskState{
-		spec,
-		nil,
+func NewTaskInst(spec *TaskSpecification) *TaskInst {
+	ts := &TaskInst{
+		Spec: spec,
 	}
 
-	if ts.Task != nil {
-		ts.Task.SetStore(persist.GetPrefixed(spec.Name))
+	if spec.ProcessorFactory != nil {
+		ts.p = spec.ProcessorFactory()
+	} else {
+		ts.p = new(defaultProcessor)
+	}
+
+	state := ts.p.State()
+	if state != nil {
+		ts.s = persist.GetPrefixed(spec.Name)
+		state.Read(ts.s)
 	}
 
 	return ts
 }
 
-func (ts *TaskState) Run() error {
-	nextUrl := ts.nextUrl()
-	fmt.Println(nextUrl)
-
-	//TODO handle URL with #fragment
-	req, err := sling.New().Client(ts.InClient).Get(nextUrl.String()).Request()
-	if err != nil {
-		panic(err)
-	}
-
-	resp, err := ts.InClient.Do(req)
+func (ts *TaskInst) Run() error {
+	resp, err := ts.retrieve()
 	if err != nil {
 		return err
 	}
 
-	if ts.Task != nil {
-		next, err := ts.Task.Process(resp)
-		if err != nil {
-			return err
-		}
+	state := ts.p.State()
 
-		if next != nil {
-			ts.next = next
+	err = ts.p.Process(resp)
+	if err != nil {
+		goto Error
+	}
+
+	err = ts.send(resp)
+	if err != nil {
+		goto Error
+	}
+
+	if state != nil {
+		err = state.Persist(ts.s)
+		if err != nil {
+			goto Error
 		}
 	}
 
-	err = ts.post(resp)
+	return nil
 
-	if err == nil {
-		ts.Task.OnSuccess()
+	// Move processor to the previous state
+Error:
+	if state != nil {
+		err = state.Read(ts.s)
 	}
 
 	return err
 }
 
-func (ts *TaskState) post(resp *http.Response) error {
-	passReq, err := http.NewRequest(http.MethodPost, ts.TargetAddress, resp.Body)
+func (task *TaskInst) retrieve() (*http.Response, error) {
+	nextUrl, err := task.nextUrl()
+	if err != nil {
+		return nil, err
+	}
+
+	log.Print(nextUrl)
+
+	//TODO handle URL with #fragment
+	req, err := sling.New().Client(task.Spec.Source.Client).Get(nextUrl.String()).Request()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := task.Spec.Source.Client.Do(req)
+	if err == nil && resp.StatusCode/100 != 2 {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		} else {
+			return nil, errors.New(string(body))
+		}
+	}
+	return resp, err
+}
+
+func (task *TaskInst) send(resp *http.Response) error {
+	passReq, err := http.NewRequest(http.MethodPost, task.Spec.Destination.Address.String(), resp.Body)
 	if err != nil {
 		return err
 	}
@@ -101,19 +152,37 @@ func (ts *TaskState) post(resp *http.Response) error {
 		passReq.Header.Add(ht.CONTENT_LEN, v)
 	}
 
-	_, err = ts.OutClient.Do(passReq)
+	_, err = task.Spec.Destination.Client.Do(passReq)
 	return err
 	//TODO handle http errors
 }
 
-func (ts *TaskState) nextUrl() *url.URL {
-	if ts.next == nil {
-		return ts.SourceSpecification.SourceAddress
-	} else {
-		return ts.next
-	}
+func (task *TaskInst) nextUrl() (*url.URL, error) {
+	return task.p.Next(task.Spec.Source.Address)
 }
 
-func (t *TaskState) String() string {
-	return fmt.Sprintf("%v %v", t.next, t.Task)
+func (t *TaskInst) String() string {
+	return fmt.Sprintf("%v %v", t.Spec.Name, t.p)
+}
+
+type defaultProcessor struct{}
+
+func (*defaultProcessor) Next(addr *url.URL) (*url.URL, error) {
+	return addr, nil
+}
+
+func (p *defaultProcessor) State() ProcessorState {
+	return p
+}
+
+func (*defaultProcessor) Process(*http.Response) error {
+	return nil
+}
+
+func (*defaultProcessor) Persist(store.Store) error {
+	return nil
+}
+
+func (*defaultProcessor) Read(store.Store) error {
+	return nil
 }

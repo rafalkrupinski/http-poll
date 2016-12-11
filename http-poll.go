@@ -1,21 +1,22 @@
 package http_poll
 
 import (
-	"fmt"
 	"github.com/rafalkrupinski/http-poll/tasks"
-	"time"
-	"os/signal"
+	"log"
 	"os"
+	"os/signal"
+	"runtime/debug"
 	"syscall"
+	"time"
 )
 
-func StartMulti(allTasks []*tasks.TaskState) {
+func StartMulti(allTasks []*tasks.TaskInst) {
 	for _, task := range allTasks {
 		go doLoop(task)
 	}
 }
 
-func Start(task *tasks.TaskState) {
+func Start(task *tasks.TaskInst) {
 	go doLoop(task)
 }
 
@@ -25,18 +26,24 @@ func Wait() {
 	<-exitSignal
 }
 
-func doLoop(task *tasks.TaskState) {
-	ticker := time.NewTicker(task.Frequency)
+func doLoop(task *tasks.TaskInst) {
+	ticker := time.NewTicker(task.Spec.Frequency)
 	go doRun(task)
 	for range ticker.C {
 		go doRun(task)
 	}
 }
 
-func doRun(task *tasks.TaskState) {
+func doRun(task *tasks.TaskInst) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Error in %v %v %s", task.Spec.Name, r, debug.Stack())
+		}
+	}()
+
 	err := task.Run()
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
-	fmt.Println(task)
+	log.Println(task)
 }

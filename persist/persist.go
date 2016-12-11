@@ -121,21 +121,18 @@ type TypedStore struct {
 	store.Store
 }
 
-func (s *TypedStore) Uint64Var(key string, target *uint64) error {
-	value, err := s.Uint64(key)
-	if err != nil {
-		return err
-	}
-	*target = value
-	return nil
-}
-
-func (s *TypedStore) Uint64(key string) (uint64, error) {
+func (s *TypedStore) Uint64(key string) (exists bool, value uint64, err error) {
 	kv, err := s.Get(key)
-	if err != nil {
-		return 0, err
+	switch err {
+	case store.ErrKeyNotFound:
+		return false, 0, nil
+	case nil:
+	default:
+		return false, 0, err
 	}
-	return strconv.ParseUint(string(kv.Value), 10, 64)
+
+	value, err = strconv.ParseUint(string(kv.Value), 10, 64)
+	return true, value, err
 }
 
 func (s *TypedStore) PutUint64(key string, value uint64) error {
