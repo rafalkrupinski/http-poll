@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/dghubble/sling"
@@ -15,6 +16,9 @@ import (
 )
 
 type Processor interface {
+	// if spec.Init is defined, this method will be called with the result
+	Init(*TaskInst) error
+
 	// Return a URL to the next batch of data based on passed default (or base) URL and Processor's state.
 	Next(*url.URL) (*url.URL, error)
 
@@ -22,7 +26,7 @@ type Processor interface {
 	State() ProcessorState
 
 	// Update the state of this processor based on the response
-	Process(*http.Response) error
+	Process(*ResponseData) error
 }
 
 type ProcessorState interface {
@@ -32,15 +36,22 @@ type ProcessorState interface {
 
 type RemoteSpecification struct {
 	//URL of the data to poll
-	Address *url.URL
+	Address string
 
 	//Method  string
 
-	*http.Client
+	Client *http.Client
+}
+
+type ResponseData struct {
+	Body   []byte
+	Header http.Header
 }
 
 type TaskSpecification struct {
 	Name string
+
+	Init *RemoteSpecification
 
 	//Poll frequency
 	Frequency time.Duration
@@ -109,6 +120,9 @@ func (ts *TaskInst) Run() error {
 
 	// Move processor to the previous state
 Error:
+
+	log.Print(err)
+
 	if state != nil {
 		err = state.Read(ts.s)
 	}
@@ -116,7 +130,7 @@ Error:
 	return err
 }
 
-func (task *TaskInst) retrieve() (*http.Response, error) {
+func (task *TaskInst) retrieve() (*ResponseData, error) {
 	nextUrl, err := task.nextUrl()
 	if err != nil {
 		return nil, err
@@ -131,7 +145,14 @@ func (task *TaskInst) retrieve() (*http.Response, error) {
 	}
 
 	resp, err := task.Spec.Source.Client.Do(req)
-	if err == nil && resp.StatusCode/100 != 2 {
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	} else if resp.StatusCode/100 != 2 {
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
@@ -139,22 +160,28 @@ func (task *TaskInst) retrieve() (*http.Response, error) {
 			return nil, errors.New(string(body))
 		}
 	}
-	return resp, err
+
+	data := &ResponseData{Body: body}
+
+	return data, err
 }
 
-func (task *TaskInst) send(resp *http.Response) error {
-	passReq, err := http.NewRequest(http.MethodPost, task.Spec.Destination.Address.String(), resp.Body)
+func (task *TaskInst) send(resp *ResponseData) error {
+	passReq, err := http.NewRequest(http.MethodPost, task.Spec.Destination.Address, bytes.NewReader(resp.Body))
 	if err != nil {
 		return err
 	}
 
-	if v := resp.Header.Get(ht.CONTENT_LEN); v != "" {
+	if ok, _ := resp.Header[ht.CONTENT_LEN]; ok {
+		v := resp.Header.Get(ht.CONTENT_LEN)
 		passReq.Header.Add(ht.CONTENT_LEN, v)
 	}
 
+	passReq.Header.Set(ht.CONTENT_TYPE, "application/json")
+
 	_, err = task.Spec.Destination.Client.Do(passReq)
-	return err
 	//TODO handle http errors
+	return err
 }
 
 func (task *TaskInst) nextUrl() (*url.URL, error) {
@@ -163,26 +190,4 @@ func (task *TaskInst) nextUrl() (*url.URL, error) {
 
 func (t *TaskInst) String() string {
 	return fmt.Sprintf("%v %v", t.Spec.Name, t.p)
-}
-
-type defaultProcessor struct{}
-
-func (*defaultProcessor) Next(addr *url.URL) (*url.URL, error) {
-	return addr, nil
-}
-
-func (p *defaultProcessor) State() ProcessorState {
-	return p
-}
-
-func (*defaultProcessor) Process(*http.Response) error {
-	return nil
-}
-
-func (*defaultProcessor) Persist(store.Store) error {
-	return nil
-}
-
-func (*defaultProcessor) Read(store.Store) error {
-	return nil
 }

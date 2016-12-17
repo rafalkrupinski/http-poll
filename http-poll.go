@@ -37,7 +37,7 @@ func doLoop(task *tasks.TaskInst) {
 func doRun(task *tasks.TaskInst) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Error in %v %v %s", task.Spec.Name, r, debug.Stack())
+			log.Printf("Error in %v %s", r, debug.Stack())
 		}
 	}()
 
