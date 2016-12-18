@@ -17,7 +17,7 @@ import (
 
 type Processor interface {
 	// if spec.Init is defined, this method will be called with the result
-	Init(*TaskInst) error
+	Init() error
 
 	// Return a URL to the next batch of data based on passed default (or base) URL and Processor's state.
 	Next(*url.URL) (*url.URL, error)
@@ -26,7 +26,7 @@ type Processor interface {
 	State() ProcessorState
 
 	// Update the state of this processor based on the response
-	Process(*ResponseData) error
+	Process(*RemoteData) error
 }
 
 type ProcessorState interface {
@@ -43,7 +43,7 @@ type RemoteSpecification struct {
 	Client *http.Client
 }
 
-type ResponseData struct {
+type RemoteData struct {
 	Body   []byte
 	Header http.Header
 }
@@ -63,7 +63,7 @@ type TaskSpecification struct {
 	Destination *RemoteSpecification
 }
 
-type ProcessorFactory func() Processor
+type ProcessorFactory func(*TaskSpecification) Processor
 
 type TaskInst struct {
 	Spec *TaskSpecification
@@ -71,13 +71,13 @@ type TaskInst struct {
 	s    store.Store
 }
 
-func NewTaskInst(spec *TaskSpecification) *TaskInst {
+func NewTaskInst(spec *TaskSpecification) (*TaskInst, error) {
 	ts := &TaskInst{
 		Spec: spec,
 	}
 
 	if spec.ProcessorFactory != nil {
-		ts.p = spec.ProcessorFactory()
+		ts.p = spec.ProcessorFactory(spec)
 	} else {
 		ts.p = new(defaultProcessor)
 	}
@@ -88,7 +88,12 @@ func NewTaskInst(spec *TaskSpecification) *TaskInst {
 		state.Read(ts.s)
 	}
 
-	return ts
+	err := ts.p.Init()
+	if err != nil {
+		return nil, err
+	}
+
+	return ts, nil
 }
 
 func (ts *TaskInst) Run() error {
@@ -130,7 +135,7 @@ Error:
 	return err
 }
 
-func (task *TaskInst) retrieve() (*ResponseData, error) {
+func (task *TaskInst) retrieve() (*RemoteData, error) {
 	nextUrl, err := task.nextUrl()
 	if err != nil {
 		return nil, err
@@ -161,18 +166,18 @@ func (task *TaskInst) retrieve() (*ResponseData, error) {
 		}
 	}
 
-	data := &ResponseData{Body: body}
+	data := &RemoteData{Body: body}
 
 	return data, err
 }
 
-func (task *TaskInst) send(resp *ResponseData) error {
+func (task *TaskInst) send(resp *RemoteData) error {
 	passReq, err := http.NewRequest(http.MethodPost, task.Spec.Destination.Address, bytes.NewReader(resp.Body))
 	if err != nil {
 		return err
 	}
 
-	if ok, _ := resp.Header[ht.CONTENT_LEN]; ok {
+	if _, ok := resp.Header[ht.CONTENT_LEN]; ok {
 		v := resp.Header.Get(ht.CONTENT_LEN)
 		passReq.Header.Add(ht.CONTENT_LEN, v)
 	}
@@ -185,7 +190,11 @@ func (task *TaskInst) send(resp *ResponseData) error {
 }
 
 func (task *TaskInst) nextUrl() (*url.URL, error) {
-	return task.p.Next(task.Spec.Source.Address)
+	addr, err := url.Parse(task.Spec.Source.Address)
+	if err != nil {
+		return nil, err
+	}
+	return task.p.Next(addr)
 }
 
 func (t *TaskInst) String() string {

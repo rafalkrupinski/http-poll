@@ -121,7 +121,7 @@ type TypedStore struct {
 	store.Store
 }
 
-func (s *TypedStore) passValue(key string, f func(*store.KVPair)) (bool, error) {
+func (s *TypedStore) passValue(key string, f func(*store.KVPair) error) (bool, error) {
 	kv, err := s.Get(key)
 	switch err {
 	case store.ErrKeyNotFound:
@@ -150,14 +150,14 @@ func (s *TypedStore) PutUint64(key string, value uint64) error {
 
 func (s *TypedStore) Int32(key string, ptr *int32) (exists bool, err error) {
 	return s.passValue(key, func(kv *store.KVPair) error {
-		value, err := strconv.ParseUint(string(kv.Value), 10, 32)
+		value, err := strconv.ParseInt(string(kv.Value), 10, 32)
 		if err == nil {
-			*ptr = value
+			*ptr = int32(value)
 		}
 		return err
 	})
 }
 
 func (s *TypedStore) PutInt32(key string, value int32) error {
-	return s.Put(key, []byte(strconv.FormatInt(value, 10)), nil)
+	return s.Put(key, []byte(strconv.FormatInt(int64(value), 10)), nil)
 }

@@ -15,11 +15,11 @@ func (p *defaultProcessor) State() ProcessorState {
 	return p
 }
 
-func (*defaultProcessor) Process(*ResponseData) error {
+func (*defaultProcessor) Process(*RemoteData) error {
 	return nil
 }
 
-func (*defaultProcessor) Init(*TaskInst) error {
+func (*defaultProcessor) Init() error {
 	return nil
 }
 
