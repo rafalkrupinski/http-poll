@@ -2,19 +2,23 @@ package tasks
 
 import (
 	"github.com/dghubble/sling"
-	"net/http"
 	"log"
+	"net/http"
 )
 
 func (rs *RemoteSpecification) request(method string) (*sling.Sling, *http.Request, error) {
 	client := sling.New().Client(rs.Client)
 	switch method {
-	case http.MethodGet:client.Get(rs.Address)
-	case http.MethodPost:client.Post(rs.Address)
-	default: log.Fatal("Unexpected method ", method)
+	case http.MethodGet:
+		client.Get(rs.Address)
+	case http.MethodPost:
+		client.Post(rs.Address)
+	default:
+		log.Fatal("Unexpected method ", method)
 	}
 
-	return client, client.Request()
+	req, err := client.Request()
+	return client, req, err
 }
 
 func (rs *RemoteSpecification) GetObject(target interface{}) (*http.Response, error) {
@@ -25,4 +29,3 @@ func (rs *RemoteSpecification) GetObject(target interface{}) (*http.Response, er
 
 	return client.Do(req, target, nil)
 }
-
