@@ -54,7 +54,8 @@ type TaskSpecification struct {
 	Init *RemoteSpecification
 
 	//Poll frequency
-	Frequency time.Duration
+	Frequency,
+	Delay time.Duration
 
 	Source *RemoteSpecification
 
@@ -88,12 +89,11 @@ func NewTaskInst(spec *TaskSpecification) (*TaskInst, error) {
 		state.Read(ts.s)
 	}
 
-	err := ts.p.Init()
-	if err != nil {
-		return nil, err
-	}
-
 	return ts, nil
+}
+
+func (t *TaskInst) Init() error {
+	return t.p.Init()
 }
 
 func (ts *TaskInst) Run() error {

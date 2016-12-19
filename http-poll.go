@@ -27,6 +27,15 @@ func Wait() {
 }
 
 func doLoop(task *tasks.TaskInst) {
+	if task.Spec.Delay != 0 {
+		time.Sleep(task.Spec.Delay)
+	}
+
+	err := task.Init()
+	if err != nil {
+		log.Fatal(task.String(), " ", err)
+	}
+
 	ticker := time.NewTicker(task.Spec.Frequency)
 	go doRun(task)
 	for range ticker.C {
