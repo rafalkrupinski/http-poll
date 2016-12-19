@@ -121,20 +121,43 @@ type TypedStore struct {
 	store.Store
 }
 
-func (s *TypedStore) Uint64(key string) (exists bool, value uint64, err error) {
+func (s *TypedStore) passValue(key string, f func(*store.KVPair) error) (bool, error) {
 	kv, err := s.Get(key)
 	switch err {
 	case store.ErrKeyNotFound:
-		return false, 0, nil
+		return false, nil
 	case nil:
 	default:
-		return false, 0, err
+		return false, err
 	}
+	return true, f(kv)
+}
 
-	value, err = strconv.ParseUint(string(kv.Value), 10, 64)
-	return true, value, err
+func (s *TypedStore) Uint64(key string, ptr *uint64) (exists bool, err error) {
+	return s.passValue(key, func(kv *store.KVPair) error {
+		value, err := strconv.ParseUint(string(kv.Value), 10, 64)
+		if err == nil {
+			*ptr = value
+		}
+		return err
+
+	})
 }
 
 func (s *TypedStore) PutUint64(key string, value uint64) error {
 	return s.Put(key, []byte(strconv.FormatUint(value, 10)), nil)
+}
+
+func (s *TypedStore) Int32(key string, ptr *int32) (exists bool, err error) {
+	return s.passValue(key, func(kv *store.KVPair) error {
+		value, err := strconv.ParseInt(string(kv.Value), 10, 32)
+		if err == nil {
+			*ptr = int32(value)
+		}
+		return err
+	})
+}
+
+func (s *TypedStore) PutInt32(key string, value int32) error {
+	return s.Put(key, []byte(strconv.FormatInt(int64(value), 10)), nil)
 }
