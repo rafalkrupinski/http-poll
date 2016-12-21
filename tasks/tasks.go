@@ -70,12 +70,20 @@ type TaskInst struct {
 	Spec *TaskSpecification
 	p    Processor
 	s    store.Store
+
+	srcAddr *url.URL
 }
 
 func NewTaskInst(spec *TaskSpecification) (*TaskInst, error) {
 	ts := &TaskInst{
 		Spec: spec,
 	}
+
+	srcAddr, err := url.Parse(spec.Source.Address)
+	if err != nil {
+		return nil, err
+	}
+	ts.srcAddr = srcAddr
 
 	if spec.ProcessorFactory != nil {
 		ts.p = spec.ProcessorFactory(spec)
@@ -102,6 +110,12 @@ func (ts *TaskInst) Run() error {
 		return err
 	}
 
+	if resp == nil {
+		// skip run
+		return nil
+	}
+
+	//keep before the first goto, can't jump over declarations
 	state := ts.p.State()
 
 	err = ts.p.Process(resp)
@@ -141,7 +155,11 @@ func (task *TaskInst) retrieve() (*RemoteData, error) {
 		return nil, err
 	}
 
-	log.Print(nextUrl)
+	log.Print("next url: ", nextUrl)
+
+	if nextUrl == nil {
+		return nil, nil
+	}
 
 	//TODO handle URL with #fragment
 	req, err := sling.New().Client(task.Spec.Source.Client).Get(nextUrl.String()).Request()
@@ -190,11 +208,9 @@ func (task *TaskInst) send(resp *RemoteData) error {
 }
 
 func (task *TaskInst) nextUrl() (*url.URL, error) {
-	addr, err := url.Parse(task.Spec.Source.Address)
-	if err != nil {
-		return nil, err
-	}
-	return task.p.Next(addr)
+	_copy := *task.srcAddr
+
+	return task.p.Next(&_copy)
 }
 
 func (t *TaskInst) String() string {

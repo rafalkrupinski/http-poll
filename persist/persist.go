@@ -148,6 +148,21 @@ func (s *TypedStore) PutUint64(key string, value uint64) error {
 	return s.Put(key, []byte(strconv.FormatUint(value, 10)), nil)
 }
 
+func (s *TypedStore) Int64(key string, ptr *int64) (exists bool, err error) {
+	return s.passValue(key, func(kv *store.KVPair) error {
+		value, err := strconv.ParseInt(string(kv.Value), 10, 64)
+		if err == nil {
+			*ptr = value
+		}
+		return err
+
+	})
+}
+
+func (s *TypedStore) PutInt64(key string, value int64) error {
+	return s.Put(key, []byte(strconv.FormatInt(value, 10)), nil)
+}
+
 func (s *TypedStore) Int32(key string, ptr *int32) (exists bool, err error) {
 	return s.passValue(key, func(kv *store.KVPair) error {
 		value, err := strconv.ParseInt(string(kv.Value), 10, 32)
